@@ -142,7 +142,7 @@ $$
 具体到我们的场景上，$X$是某次采样节点邻居的聚合，$Y$是该节点所有邻居的聚合。基于control variate的方法训练GCN的过程为：
 $$
 \begin{align}
-\hat{z}_{v}^{(l+1)}&=\frac{|\mathcal{N}(v)|}{\left|\hat{\mathcal{N}}^{(l)}(v)\right|} \sum_{u \in \hat{\mathcal{N}}^{(l)}(v)} \tilde{A}_{u v}\left(\hat{h}_{u}^{(l)}-\overline{h}_{u}^{(l)}\right)+\sum_{u \in \mathcal{N}(v)} \tilde{A}_{u \nu} \overline{h}_{u}^{(l)}\\
+\hat{z}_{v}^{(l+1)}&=\frac{1}{\left|\hat{\mathcal{N}}^{(l)}(v)\right|} \sum_{u \in \hat{\mathcal{N}}^{(l)}(v)} \tilde{A}_{u v}\left(\hat{h}_{u}^{(l)}-\overline{h}_{u}^{(l)}\right)+\frac{1}{|\mathcal{N}(v)|}\sum_{u \in \mathcal{N}(v)} \tilde{A}_{u \nu} \overline{h}_{u}^{(l)}\\
 \hat{h}_{v}^{(l+1)}&=\sigma\left(\hat{z}_{v}^{(l+1)} W^{(l)}\right)
 \end{align}
 $$
@@ -151,19 +151,19 @@ $$
 ```python
 g.ndata['h_0'] = features
 for i in range(L):
-  g.ndata['h_{}'.format(i+1)] = mx.nd.zeros((features.shape[0], n_hidden))
-  # With control-variate sampling, we only need to sample 2 neighbors to train GCN.
-  for nf in dgl.contrib.sampling.NeighborSampler(g, batch_size, expand_factor=2,
-                                                 neighbor_type='in', num_hops=L,
-                                                 seed_nodes=train_nid):
+    g.ndata['h_{}'.format(i+1)] = mx.nd.zeros((features.shape[0], n_hidden))
+# With control-variate sampling, you only need to sample two neighbors to train GCN.
+for nf in dgl.contrib.sampling.NeighborSampler(g, batch_size, expand_factor=2,
+                                               neighbor_type='in', num_hops=L,
+                                               seed_nodes=train_nid):
     for i in range(nf.num_blocks):
-      # aggregate history on the original graph
-      g.pull(nf.layer_parent_nid(i+1),
-             fn.copy_src(src='h_{}'.format(i), out='m'),
-             lambda node: {'agg_h_{}'.format(i): node.mailbox['m'].mean(axis=1)})
-      nf.copy_from_parent()
-      h = nf.layers[0].data['features']
-      for i in range(nf.num_blocks):
+        # aggregate history on the original graph
+        g.pull(nf.layer_parent_nid(i+1),
+               fn.copy_src(src='h_{}'.format(i), out='m'),
+               lambda node: {'agg_h_{}'.format(i): node.mailbox['m'].mean(axis=1)})
+    nf.copy_from_parent()
+    h = nf.layers[0].data['features']
+    for i in range(nf.num_blocks):
         prev_h = nf.layers[i].data['h_{}'.format(i)]
         # compute delta_h, the difference of the current activation and the history
         nf.layers[i].data['delta_h'] = h - prev_h
@@ -179,11 +179,13 @@ for i in range(L):
         nf.layers[i + 1].data['h'] = delta_h + agg_h
         nf.apply_layer(i + 1, lambda node : {'h' : layer(node.data['h'])})
         h = nf.layers[i + 1].data['h']
-        # update history
-        nf.copy_to_parent()
+    # update history
+    nf.copy_to_parent()
 ```
 
-上文代码中，`nf`是`NeighborSampler`返回的对象，在`nf`的对象的每一个`block`内，首先调用`pull`函数获取$\hat{h}^{(l)}$(即代码中的`agg_h_{}`)，然后计算$\bar{h}_u^{(l)}$和$\hat{h}_u^{(l)}-\bar{h}_u^{(l)}$(即代码中的`delta_h`和`agg_h`)，最后将更新后的结果拷贝回原大图中。
+上文代码中，`nf`是`NeighborSampler`返回的对象，在`nf`的对象的每一个`block`内，首先调用`pull`函数获取$\frac{1}{|\mathcal{N}(v)|}\sum_{u \in \mathcal{N}(v)} \tilde{A}_{u \nu} \overline{h}_{u}^{(l)}$(即代码中的`agg_h_{}`)，然后计算$\frac{1}{\left|\hat{\mathcal{N}}^{(l)}(v)\right|}\sum_{u \in \hat{\mathcal{N}}^{(l)}(v)} \tilde{A}_{u v}\left(\hat{h}_{u}^{(l)}-\overline{h}_{u}^{(l)}\right)$和$\frac{1}{|\mathcal{N}(v)|}\sum_{u \in \mathcal{N}(v)} \tilde{A}_{u \nu} \overline{h}_{u}^{(l)}$
+
+(即代码中的`delta_h`和`agg_h`)，最后将更新后的结果拷贝回原大图中。
 
 ## 后话
 
